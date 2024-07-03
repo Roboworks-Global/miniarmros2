@@ -1,12 +1,14 @@
 import rclpy
-from rclpy.node import Node
 import cv2
 import numpy as np
+
+from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo
-from vision_msgs.msg import Detection3DArray, Detection2DArray, BoundingBox3D, BoundingBox2D
+from vision_msgs.msg import Detection3DArray, Detection3D, BoundingBox3D, BoundingBox2D, ObjectHypothesisWithPose
 from cv_bridge import CvBridge
 
 from tf2_ros import Buffer, TransformListener, TransformBroadcaster
+from typing import List, Tuple
 
 # Global variables to store HSV ranges for multiple colors
 
@@ -35,6 +37,8 @@ class ColorDetectorNode(Node):
     depth_image = None
     camera_info = None
     maximum_detection_threshold = 0.3
+    min_contour_area = 200
+    target_frame = "camera_link"
 
     def __init__(self):
         super().__init__('color_detector')
@@ -45,6 +49,9 @@ class ColorDetectorNode(Node):
         self.detections_pub = self.create_publisher(Detection3DArray, 'detections', 10)
 
         self.bridge = CvBridge()
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
 
         cv2.namedWindow('Mask')
         cv2.namedWindow('Camera Feed')
@@ -147,6 +154,32 @@ class ColorDetectorNode(Node):
 
         return msg
 
+    def get_transform(self, frame_id: str) -> Tuple[np.ndarray]:
+        # transform position from image frame to target_frame
+        rotation = None
+        translation = None
+
+        try:
+            transform: TransformStamped = self.tf_buffer.lookup_transform(
+                self.target_frame,
+                frame_id,
+                rclpy.time.Time())
+
+            translation = np.array([transform.transform.translation.x,
+                                    transform.transform.translation.y,
+                                    transform.transform.translation.z])
+
+            rotation = np.array([transform.transform.rotation.w,
+                                 transform.transform.rotation.x,
+                                 transform.transform.rotation.y,
+                                 transform.transform.rotation.z])
+
+            return translation, rotation
+
+        except TransformException as ex:
+            self.get_logger().error(f"Could not transform: {ex}")
+            return None
+
 
     def timer_callback(self):
         if self.rgb_image is None or self.depth_image is None or self.camera_info is None:
@@ -156,16 +189,26 @@ class ColorDetectorNode(Node):
             cv2.imshow("Camera Feed", self.rgb_image)
             return
         
+        transform = self.get_transform(self.camera_info.header.frame_id)
+        if transform is None:
+            return
+
         key = cv2.waitKey(1)
         self.select_color(key)
+
+        kernel = np.ones((11,11), np.float32) / 121
+        processed_image = cv2.filter2D(self.rgb_image, -1, kernel)
 
         detected_cubes = self.rgb_image.copy()
         combined_combined_mask = np.zeros(self.rgb_image.shape, dtype=np.uint8)
 
+        detections_msg = Detection3DArray()
+        detections_msg.header = self.camera_info.header
+
         for colour in self.hsv_ranges.keys():
-            combined_mask = np.zeros(self.rgb_image.shape[:2], dtype=np.uint8)
+            combined_mask = np.zeros(processed_image.shape[:2], dtype=np.uint8)
             for hsv_range in self.hsv_ranges[colour]:
-                hsv_frame = cv2.cvtColor(self.rgb_image, cv2.COLOR_BGR2HSV)
+                hsv_frame = cv2.cvtColor(processed_image, cv2.COLOR_BGR2HSV)
                 mask = cv2.inRange(hsv_frame, hsv_range[0], hsv_range[1])
                 combined_mask = cv2.bitwise_or(combined_mask, mask)
 
@@ -175,7 +218,7 @@ class ColorDetectorNode(Node):
             combined_combined_mask = cv2.bitwise_or(combined_combined_mask, mask_with_contours)
 
             for contour in contours:
-                if cv2.contourArea(contour) > 200:
+                if cv2.contourArea(contour) > self.min_contour_area:
                     x, y, w, h = cv2.boundingRect(contour)
                     cv2.rectangle(detected_cubes, (x, y), (x + w, y + h), COLOUR_CODES[colour], 2)
 
@@ -188,11 +231,62 @@ class ColorDetectorNode(Node):
                     bbox3d = self.convert_bb_to_3d(bbox2d)
 
                     if bbox3d is not None:
+                        bbox3d = self.transform_3d_box(bbox3d, transform[0], transform[1])
                         label = f'X: {bbox3d.center.position.x:.2f}, Y: {bbox3d.center.position.y:.2f}, Z: {bbox3d.center.position.z:.2f}'
                         cv2.putText(detected_cubes, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOUR_CODES[colour], 2)
 
+                        detection = Detection3D()
+                        detection.bbox = bbox3d
+                        detection.id = colour
+                        detections_msg.detections.append(detection)
+
+
+        combined_combined_mask = cv2.addWeighted(processed_image, 0.7, combined_combined_mask, 0.3, 0)
+        self.detections_pub.publish(detections_msg)
         cv2.imshow('Mask', combined_combined_mask)
         cv2.imshow('Camera Feed', detected_cubes)
+
+    def transform_3d_box(
+        self,
+        bbox: BoundingBox3D,
+        translation: np.ndarray,
+        rotation: np.ndarray
+    ) -> BoundingBox3D:
+
+        # position
+        position = self.qv_mult(
+            rotation,
+            np.array([bbox.center.position.x,
+                      bbox.center.position.y,
+                      bbox.center.position.z])
+        ) + translation
+
+        bbox.center.position.x = position[0]
+        bbox.center.position.y = position[1]
+        bbox.center.position.z = position[2]
+
+        # size
+        size = self.qv_mult(
+            rotation,
+            np.array([bbox.size.x,
+                      bbox.size.y,
+                      bbox.size.z])
+        )
+
+        bbox.size.x = abs(size[0])
+        bbox.size.y = abs(size[1])
+        bbox.size.z = abs(size[2])
+
+        return bbox
+
+    def qv_mult(self, q: np.ndarray, v: np.ndarray) -> np.ndarray:
+        q = np.array(q, dtype=np.float64)
+        v = np.array(v, dtype=np.float64)
+        qvec = q[1:]
+        uv = np.cross(qvec, v)
+        uuv = np.cross(qvec, uv)
+        return v + 2 * (uv * q[0] + uuv)
+
 
 def main(args=None):
     rclpy.init(args=args)
