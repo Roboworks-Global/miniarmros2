@@ -19,9 +19,6 @@ COLOUR_CODES = {
     "yellow": (0, 255, 255),
 }
 
-H_TOLERANCE = 10
-S_TOLERANCE = 20
-V_TOLERANCE = 20
 
 class ColorDetectorNode(Node):
     hsv_ranges = {
@@ -38,7 +35,12 @@ class ColorDetectorNode(Node):
     camera_info = None
     maximum_detection_threshold = 0.3
     min_contour_area = 200
+    blur_kernel_size = 3
     target_frame = "camera_link"
+
+    H_TOLERANCE = 10
+    S_TOLERANCE = 20
+    V_TOLERANCE = 20
 
     def __init__(self):
         super().__init__('color_detector')
@@ -75,8 +77,14 @@ class ColorDetectorNode(Node):
             hsv_pixel = cv2.cvtColor(np.uint8([[bgr_pixel]]), cv2.COLOR_BGR2HSV)[0][0]
 
             hsv_range = (
-                np.array([max(hsv_pixel[0] - H_TOLERANCE, 0), max(hsv_pixel[1] - S_TOLERANCE, 0), max(hsv_pixel[2] - V_TOLERANCE, 0)]),
-                np.array([min(hsv_pixel[0] + H_TOLERANCE, 179), min(hsv_pixel[1] + S_TOLERANCE, 255), min(hsv_pixel[2] + V_TOLERANCE, 255)])
+                np.array([
+                    max(hsv_pixel[0] - self.H_TOLERANCE, 0),
+                    max(hsv_pixel[1] - self.S_TOLERANCE, 0),
+                    max(hsv_pixel[2] - self.V_TOLERANCE, 0)]),
+                np.array([
+                    min(hsv_pixel[0] + self.H_TOLERANCE, 179),
+                    min(hsv_pixel[1] + self.S_TOLERANCE, 255),
+                    min(hsv_pixel[2] + self.V_TOLERANCE, 255)])
             )
 
             self.hsv_ranges[self.current_color].append(hsv_range)
@@ -196,7 +204,7 @@ class ColorDetectorNode(Node):
         key = cv2.waitKey(1)
         self.select_color(key)
 
-        kernel = np.ones((11,11), np.float32) / 121
+        kernel = np.ones((self.blur_kernel_size, self.blur_kernel_size), np.float32) / self.blur_kernel_size ** 2
         processed_image = cv2.filter2D(self.rgb_image, -1, kernel)
 
         detected_cubes = self.rgb_image.copy()
