@@ -35,8 +35,13 @@ class ColorDetectorNode(Node):
     camera_info = None
     maximum_detection_threshold = 0.3
     min_contour_area = 200
-    blur_kernel_size = 3
     target_frame = "camera_link"
+
+    blur_kernel_size = 50 #Gaussian blur
+    sigmaColour = 9 #bilateral filter
+    sigmaSpace = 75 #bilateral filter
+    alpha = 5.0 #contrast
+    beta = 1.0 #brightness
 
     H_TOLERANCE = 10
     S_TOLERANCE = 20
@@ -204,8 +209,12 @@ class ColorDetectorNode(Node):
         key = cv2.waitKey(1)
         self.select_color(key)
 
-        kernel = np.ones((self.blur_kernel_size, self.blur_kernel_size), np.float32) / self.blur_kernel_size ** 2
-        processed_image = cv2.filter2D(self.rgb_image, -1, kernel)
+        # kernel = np.ones((self.blur_kernel_size, self.blur_kernel_size), np.float32) / self.blur_kernel_size ** 2
+        # processed_image = cv2.filter2D(self.rgb_image, -1, kernel)
+
+        # processed_image = cv2.GaussianBlur(self.rgb_image, (self.blur_kernel_size, self.blur_kernel_size), 0)
+        processed_image = cv2.convertScaleAbs(self.rgb_image, self.alpha, self.beta)
+        processed_image = cv2.bilateralFilter(processed_image, self.sigmaColour, self.sigmaSpace, self.sigmaSpace)
 
         detected_cubes = self.rgb_image.copy()
         combined_combined_mask = np.zeros(self.rgb_image.shape, dtype=np.uint8)
