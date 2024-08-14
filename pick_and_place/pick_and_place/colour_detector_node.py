@@ -35,6 +35,7 @@ class ColorDetectorNode(Node):
     camera_info = None
     maximum_detection_threshold = 0.3
     min_contour_area = 200
+    max_contour_area = 1000
     target_frame = "camera_link"
 
     blur_kernel_size = 50 #Gaussian blur
@@ -235,7 +236,8 @@ class ColorDetectorNode(Node):
             combined_combined_mask = cv2.bitwise_or(combined_combined_mask, mask_with_contours)
 
             for contour in contours:
-                if cv2.contourArea(contour) > self.min_contour_area:
+                area = cv2.contourArea(contour)
+                if area > self.min_contour_area and area < self.max_contour_area:
                     x, y, w, h = cv2.boundingRect(contour)
                     cv2.rectangle(detected_cubes, (x, y), (x + w, y + h), COLOUR_CODES[colour], 2)
 
