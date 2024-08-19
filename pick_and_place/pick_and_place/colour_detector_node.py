@@ -242,8 +242,8 @@ class ColorDetectorNode(Node):
                     cv2.rectangle(detected_cubes, (x, y), (x + w, y + h), COLOUR_CODES[colour], 2)
 
                     bbox2d = BoundingBox2D()
-                    bbox2d.center.position.x = float(x + w // 2)
-                    bbox2d.center.position.y = float(y + h // 2)
+                    bbox2d.center.x = float(x + w // 2)
+                    bbox2d.center.y = float(y + h // 2)
                     bbox2d.size_x = float(w)
                     bbox2d.size_y = float(h)
 
