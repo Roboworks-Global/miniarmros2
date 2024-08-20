@@ -119,8 +119,8 @@ class ColorDetectorNode(Node):
     ) -> BoundingBox3D:
 
         # crop depth image by the 2d BB
-        center_x = int(bbox.center.position.x)
-        center_y = int(bbox.center.position.y)
+        center_x = int(bbox.center.x)
+        center_y = int(bbox.center.y)
         size_x = int(bbox.size_x)
         size_y = int(bbox.size_y)
 
