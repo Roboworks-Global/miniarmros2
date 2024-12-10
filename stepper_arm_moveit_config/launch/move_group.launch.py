@@ -9,7 +9,7 @@ import os
 
 def generate_launch_description():
     # Get the package directory
-    pkg_name = "mini_mec_four_arm_moveit_config"
+    pkg_name = "stepper_arm_moveit_config"
     pkg_share = get_package_share_directory(pkg_name)
 
     # Declare all launch arguments
@@ -104,7 +104,7 @@ def generate_launch_description():
         launch_arguments={
             'moveit_manage_controllers': 'true',
             'moveit_controller_manager': PythonExpression([
-                "'fake' if '", LaunchConfiguration('fake_execution'), "' else 'mini_mec_four_arm'"
+                "'fake' if '", LaunchConfiguration('fake_execution'), "' else 'stepper_arm'"
             ])
         }.items()
     )
@@ -115,7 +115,7 @@ def generate_launch_description():
             os.path.join(pkg_share, 'launch', 'sensor_manager.launch.py')
         ]),
         condition=IfCondition(LaunchConfiguration('allow_trajectory_execution')),
-        launch_arguments={'moveit_sensor_manager': 'mini_mec_four_arm'}.items()
+        launch_arguments={'moveit_sensor_manager': 'stepper_arm'}.items()
     )
 
     # Start move_group node

@@ -23,6 +23,7 @@ setup(
     entry_points={
         'console_scripts': [
             'colour_detector = pick_and_place.colour_detector_node:main',
+            'controller = pick_and_place.controller:main'
         ],
     },
 )

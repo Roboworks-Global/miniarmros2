@@ -8,7 +8,7 @@ import os
 
 def generate_launch_description():
     # Get the package directory
-    pkg_share = get_package_share_directory('mini_mec_four_arm_moveit_config')
+    pkg_share = get_package_share_directory('stepper_arm_moveit_config')
 
     # Declare arguments
     moveit_manage_controllers = DeclareLaunchArgument(
@@ -19,7 +19,7 @@ def generate_launch_description():
 
     moveit_controller_manager = DeclareLaunchArgument(
         'moveit_controller_manager',
-        default_value='mini_mec_four_arm',
+        default_value='stepper_arm',
         description='Robot specific controller manager'
     )
 

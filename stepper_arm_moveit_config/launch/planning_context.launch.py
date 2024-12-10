@@ -9,8 +9,8 @@ import yaml
 
 def generate_launch_description():
     # Get package directories
-    moveit_config_pkg = get_package_share_directory('mini_mec_four_arm_moveit_config')
-    robot_pkg = get_package_share_directory('mini_mec_four_arm')
+    moveit_config_pkg = get_package_share_directory('stepper_arm_moveit_config')
+    robot_pkg = get_package_share_directory('stepper_arm')
 
     # Declare arguments
     load_robot_description = DeclareLaunchArgument(
@@ -44,7 +44,7 @@ def generate_launch_description():
     robot_description_semantic = {
         'robot_description_semantic': {
             'type': 'file',
-            'content': os.path.join(moveit_config_pkg, 'config', 'mini_mec_four_arm.srdf'),
+            'content': os.path.join(moveit_config_pkg, 'config', 'stepper_arm.srdf'),
         }
     }
 

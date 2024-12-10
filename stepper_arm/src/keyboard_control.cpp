@@ -43,7 +43,7 @@ void ArmKeyboardControlNode::timer_callback() {
     cmd_vel.angular.y=0;
     cmd_vel.angular.z=Car_turn_velocity;
     if (cmd_vel_enable) cmd_vel_publisher->publish(cmd_vel);
-    std::count <<key_wait_count<<std::endl;
+    // std::count <<key_wait_count<<std::endl;
     key_wait_count++;
     if (key_wait_count>30) {
         Car_foward_velocity=0,

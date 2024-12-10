@@ -7,7 +7,7 @@ import os
 
 def generate_launch_description():
     # Get the package directory
-    pkg_share = get_package_share_directory('mini_mec_four_arm_moveit_config')
+    pkg_share = get_package_share_directory('stepper_arm_moveit_config')
 
     # Declare arguments
     pipeline = DeclareLaunchArgument(

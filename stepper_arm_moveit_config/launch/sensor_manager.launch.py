@@ -9,7 +9,7 @@ import yaml
 
 def generate_launch_description():
     # Get the package directory
-    pkg_share = get_package_share_directory('mini_mec_four_arm_moveit_config')
+    pkg_share = get_package_share_directory('stepper_arm_moveit_config')
 
     # Load the sensors_3d.yaml file
     with open(os.path.join(pkg_share, 'config', 'sensors_3d.yaml'), 'r') as f:
@@ -18,7 +18,7 @@ def generate_launch_description():
     # Declare arguments
     moveit_sensor_manager = DeclareLaunchArgument(
         'moveit_sensor_manager',
-        default_value='mini_mec_four_arm',
+        default_value='stepper_arm',
         description='Robot specific sensor manager'
     )
 
