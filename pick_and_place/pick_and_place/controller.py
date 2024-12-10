@@ -57,6 +57,12 @@ class DiceCollector(Node):
             return
             
         for detection in msg.detections:
+            is_duplicate = False
+            for existing_dice in self.detected_dices:
+                if abs(existing_dice.bbox.center.position.y - detection.bbox.center.position.y) < 0.5: # if the dice is close to each other, it is probably the same dice seen from different angles before.
+                    is_duplicate = True
+                    break
+            if is_duplicate: continue
             self.detected_dices.append(detection)
         self.get_logger().info('Red dice detected!')
         # Cancel current navigation if exploring
