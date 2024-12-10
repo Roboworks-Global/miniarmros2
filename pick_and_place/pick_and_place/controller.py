@@ -49,12 +49,16 @@ class DiceCollector(Node):
             10
         )
         
-        # Gripper publisher
-        self.gripper_pub = self.create_publisher(
-            GripperCommand,
-            'gripper_command',
-            10
-        )
+        # Initialize MoveIt
+        self.move_group_arm = MoveGroupInterface("arm", "robot_description")
+        self.move_group_hand = MoveGroupInterface("hand", "robot_description")
+        self.scene = PlanningSceneInterface()
+        
+        # Set movement parameters
+        self.move_group_arm.set_max_velocity_scaling_factor(0.5)
+        self.move_group_arm.set_max_acceleration_scaling_factor(0.5)
+        self.move_group_arm.set_goal_orientation_tolerance(0.1)
+        self.move_group_arm.set_goal_position_tolerance(0.01)
 
         # State management
         self.current_waypoint = 0
@@ -63,7 +67,74 @@ class DiceCollector(Node):
         
         # Create timer for exploration
         self.timer = self.create_timer(1.0, self.timer_callback)
+    def control_gripper(self, open_width):
+        """
+        Control gripper using MoveIt
+        @param open_width: float between 0.0 (closed) and 0.08 (open)
+        """
+        try:
+            # Scale the open_width to joint values for all gripper joints
+            joint_values = {}
+            if open_width == GRIPPER_OPEN:  # 0.08
+                # Open position
+                joint_values = {
+                    'hand_left_joint': 0.04,
+                    'hand_left2_joint': 0.04,
+                    'hand_right_joint': -0.04,
+                    'hand_right2_joint': -0.04
+                }
+            else:  # GRIPPER_CLOSED (0.02)
+                # Closed position
+                joint_values = {
+                    'hand_left_joint': 0.01,
+                    'hand_left2_joint': 0.01,
+                    'hand_right_joint': -0.01,
+                    'hand_right2_joint': -0.01
+                }
 
+            # Set joint values
+            self.move_group_hand.set_joint_value_target(joint_values)
+            
+            # Plan and execute
+            success = self.move_group_hand.go(wait=True)
+            self.move_group_hand.stop()
+            
+            if not success:
+                self.get_logger().error('Failed to move gripper')
+                return False
+                
+            return True
+            
+        except Exception as e:
+            self.get_logger().error(f'Gripper control failed: {e}')
+            return False
+        
+    def move_to_home_position(self):
+        """Move the arm to its home position"""
+        self.move_group_arm.set_named_target("home")
+        success = self.move_group_arm.go(wait=True)
+        self.move_group_arm.stop()
+        return success
+    
+    def create_pick_pose(self, target_pose):
+        """Create picking pose from detected dice position"""
+        pick_pose = PoseStamped()
+        pick_pose.header.frame_id = "map"
+        pick_pose.header.stamp = self.get_clock().now().to_msg()
+        
+        # Set position slightly above the dice
+        pick_pose.pose.position.x = target_pose.position.x
+        pick_pose.pose.position.y = target_pose.position.y
+        pick_pose.pose.position.z = target_pose.position.z + 0.1  # Approach from above
+        
+        # Set orientation for vertical approach
+        pick_pose.pose.orientation.x = 0.0
+        pick_pose.pose.orientation.y = 0.707
+        pick_pose.pose.orientation.z = 0.0
+        pick_pose.pose.orientation.w = 0.707
+        
+        return pick_pose
+    
     def detection_callback(self, msg):
         if self.is_busy:
             return
@@ -92,12 +163,6 @@ class DiceCollector(Node):
             self.current_nav_goal.cancel_goal_async()
             self.current_nav_goal = None
 
-    def control_gripper(self, open_width):
-        msg = GripperCommand()
-        msg.position = open_width
-        msg.max_effort = 50.0
-        self.gripper_pub.publish(msg)
-        time.sleep(1.0)
 
     def create_nav_goal(self, x, y):
         pose = PoseStamped()
@@ -158,23 +223,119 @@ class DiceCollector(Node):
         if not self.navigate_sync(target.x - APPROACH_DISTANCE, target.y):
             return False
         
-        # Pick sequence
-        self.control_gripper(GRIPPER_OPEN)
-        # Add MoveIt arm movement here
-        
-        # Close gripper
-        self.control_gripper(GRIPPER_CLOSED)
-        return True
+        try:
+            # Navigate to approach pose
+            target = self.detected_dice.position
+            if not self.navigate_sync(target.x - APPROACH_DISTANCE, target.y):
+                return False
+            
+            # Create pick pose
+            pick_pose = self.create_pick_pose(self.detected_dice)
+            
+            # Pre-grasp position
+            pick_pose.pose.position.z += 0.1  # Higher approach position
+            self.move_group_arm.set_pose_target(pick_pose)
+            if not self.move_group_arm.go(wait=True):
+                self.get_logger().error('Failed to reach pre-grasp position')
+                return False
+            
+            # Open gripper using MoveIt
+            if not self.open_gripper():
+                return False
+            
+            # Move down to grasp
+            pick_pose.pose.position.z -= 0.1
+            self.move_group_arm.set_pose_target(pick_pose)
+            if not self.move_group_arm.go(wait=True):
+                self.get_logger().error('Failed to reach grasp position')
+                return False
+            
+            # Close gripper using MoveIt
+            if not self.close_gripper():
+                return False
+            
+            # Lift object
+            pick_pose.pose.position.z += 0.15
+            self.move_group_arm.set_pose_target(pick_pose)
+            success = self.move_group_arm.go(wait=True)
+            
+            if not success:
+                self.get_logger().error('Failed to lift object')
+                return False
+                
+            return True
+            
+        except Exception as e:
+            self.get_logger().error(f'Pick operation failed: {e}')
+            return False
+        finally:
+            self.move_group_arm.stop()
+            self.move_group_arm.clear_pose_targets()
 
     def return_to_bin(self):
         # Navigate to bin (synchronized)
         if not self.navigate_sync(BIN_LOCATION['x'], BIN_LOCATION['y']):
             return False
         
-        # Drop sequence
-        self.control_gripper(GRIPPER_OPEN)
-        self.detected_dice = None
-        return True
+        try:
+            # Create place pose
+            place_pose = PoseStamped()
+            place_pose.header.frame_id = "map"
+            place_pose.header.stamp = self.get_clock().now().to_msg()
+            
+            # Position above bin
+            place_pose.pose.position.x = BIN_LOCATION['x']
+            place_pose.pose.position.y = BIN_LOCATION['y']
+            place_pose.pose.position.z = 0.4  # Higher position above bin
+            
+            # Orientation for dropping (vertical orientation)
+            place_pose.pose.orientation.x = 0.0
+            place_pose.pose.orientation.y = 0.707
+            place_pose.pose.orientation.z = 0.0
+            place_pose.pose.orientation.w = 0.707
+            
+            # Move arm to pre-place position
+            self.move_group_arm.set_pose_target(place_pose)
+            if not self.move_group_arm.go(wait=True):
+                self.get_logger().error('Failed to move to pre-place position')
+                return False
+                
+            # Lower into bin
+            place_pose.pose.position.z = 0.2  # Lower position inside bin
+            self.move_group_arm.set_pose_target(place_pose)
+            if not self.move_group_arm.go(wait=True):
+                self.get_logger().error('Failed to move to place position')
+                return False
+            
+            # Open gripper using MoveIt
+            if not self.open_gripper():
+                self.get_logger().error('Failed to open gripper')
+                return False
+                
+            # Slight pause to ensure object drops
+            time.sleep(0.5)
+            
+            # Move arm up
+            place_pose.pose.position.z = 0.4
+            self.move_group_arm.set_pose_target(place_pose)
+            if not self.move_group_arm.go(wait=True):
+                self.get_logger().error('Failed to retract arm')
+                return False
+                
+            # Return to home position
+            if not self.move_to_home_position():
+                self.get_logger().error('Failed to return to home position')
+                return False
+                
+            self.detected_dice = None
+            return True
+                
+        except Exception as e:
+            self.get_logger().error(f'Place operation failed: {e}')
+            return False
+        finally:
+            self.move_group_arm.stop()
+            self.move_group_arm.clear_pose_targets()
 
     def timer_callback(self):
         # Skip if busy with another operation
