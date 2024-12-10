@@ -8,6 +8,16 @@ from vision_msgs.msg import Detection3DArray
 from control_msgs.msg import GripperCommand
 import time
 
+from control_msgs.msg import GripperCommand
+from moveit_msgs.msg import MoveItErrorCodes
+from moveit.planning import MoveGroupInterface, PlanningSceneInterface
+import time
+import tf2_ros
+import tf2_geometry_msgs
+
+from tf2_ros import Buffer, TransformListener, TransformBroadcaster
+
+
 WAYPOINTS = [
     {'x': 1.0, 'y': 1.0},
     {'x': 2.0, 'y': 1.0},
@@ -26,7 +36,9 @@ class DiceCollector(Node):
         
         # Navigation client
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
         # Vision subscriber
         self.detected_dices = []
         self.detected_dice = None
@@ -55,15 +67,25 @@ class DiceCollector(Node):
     def detection_callback(self, msg):
         if self.is_busy:
             return
-            
+        try:
+            transform = self.tf_buffer.lookup_transform('map', msg.header.frame_id, msg.header.stamp)
+        except Exception as e:
+            self.get_logger().error(f'Failed to lookup transform: {e}')
+            return
         for detection in msg.detections:
+            # transform detection to map frame
+            try:
+                detection_map_coordinates= tf2_geometry_msgs.do_transform_pose(detection.bbox.center, transform)
+            except Exception as e:
+                self.get_logger().error(f'Failed to transform detection: {e}')
+                continue
             is_duplicate = False
             for existing_dice in self.detected_dices:
-                if abs(existing_dice.bbox.center.position.y - detection.bbox.center.position.y) < 0.5: # if the dice is close to each other, it is probably the same dice seen from different angles before.
+                if abs(existing_dice.position.y - detection_map_coordinates.position.y) < 0.3 and abs(existing_dice.position.x - detectionMap.position.x)<0.3: # if the dice is close to each other, it is probably the same dice seen from different angles before.
                     is_duplicate = True
                     break
             if is_duplicate: continue
-            self.detected_dices.append(detection)
+            self.detected_dices.append(detection_map_coordinates)
         self.get_logger().info('Red dice detected!')
         # Cancel current navigation if exploring
         if self.current_nav_goal is not None:
@@ -132,7 +154,7 @@ class DiceCollector(Node):
             return False
             
         # Navigate to approach pose (synchronized)
-        target = self.detected_dice.bbox.center.position
+        target = self.detected_dice.position
         if not self.navigate_sync(target.x - APPROACH_DISTANCE, target.y):
             return False
         
