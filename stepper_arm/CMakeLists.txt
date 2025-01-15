@@ -24,6 +24,9 @@ add_executable(keyboard_control
   src/keyboard_control.cpp
 )
 
+add_executable(arm_target_point
+  src/arm_target_point.cpp
+)
 ament_target_dependencies(keyboard_control
   rclcpp
   std_msgs
@@ -31,7 +34,17 @@ ament_target_dependencies(keyboard_control
   geometry_msgs
 )
 
+ament_target_dependencies(arm_target_point
+  rclcpp
+  std_msgs
+  sensor_msgs
+  geometry_msgs
+)
+
 target_link_libraries(keyboard_control
+  stepper_arm
+)
+target_link_libraries(arm_target_point
   stepper_arm
 )
 
@@ -42,7 +55,13 @@ install(
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
-
+install(
+  TARGETS arm_target_point
+  DESTINATION lib/${PROJECT_NAME}
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 # install(
 #   DIRECTORY config launch
 #   DESTINATION share/${PROJECT_NAME}
