@@ -19,9 +19,9 @@ public:
             std::bind(&ArmTargetPointControlNode::target_point_callback, this, std::placeholders::_1));
 
         // Create timer for publishing joint states
-        timer = this->create_wall_timer(
-            std::chrono::milliseconds(10),
-            std::bind(&ArmTargetPointControlNode::timer_callback, this));
+        // timer = this->create_wall_timer(
+        //     std::chrono::milliseconds(10),
+        //     std::bind(&ArmTargetPointControlNode::timer_callback, this));
 
         // Get parameters
         this->declare_parameter("Angle_B_bias", 1.571);
@@ -56,6 +56,7 @@ private:
             // Update the end position tracking
             arm_2_positive_solution(ArmC_End_Position_X, ArmC_End_Position_Y, Joint_B, Joint_C);
             RCLCPP_INFO(this->get_logger(), "Moving to target point");
+            timer_callback();
         } else {
             RCLCPP_ERROR(this->get_logger(), 
                 "Target point out of range (error code: %d)", range_check);
