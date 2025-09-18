@@ -96,12 +96,12 @@ def generate_launch_description():
             package='tf2_ros', 
             executable='static_transform_publisher', 
             name='base_to_laser',
-            arguments=['0.048 ', '0', '0.18','0', '0','0','base_footprint','laser'],),
+            arguments=['0.09 ', '0', '0.18','0', '0','0','base_footprint','laser'],),
         launch_ros.actions.Node(
             package='tf2_ros', 
             executable='static_transform_publisher', 
             name='base_to_camera',
-            arguments=['0.195', '0', '0.25','0', '0','0','base_footprint','camera_link'],),
+            arguments=['0.10', '0', '0.27','0', '0.523','0','base_footprint','camera_link'],),
     ])
 
     senior_mec_bs = GroupAction([

@@ -23,7 +23,12 @@ setup(
     entry_points={
         'console_scripts': [
             'colour_detector = pick_and_place.colour_detector_node:main',
-            'controller = pick_and_place.controller:main'
+            'block_detector = pick_and_place.blockdetector_tester:main',
+            'og_colour_detector= pick_and_place.base_colour_detector_node:main',
+            'controller = pick_and_place.controller:main',
+            'controller_v2 = pick_and_place.controller_v2:main',
+            'arm_tester =  pick_and_place.arm_tester:main',
+            'nav2_tester = pick_and_place.nav2_tester:main'
         ],
     },
 )

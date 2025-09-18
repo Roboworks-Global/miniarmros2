@@ -5,21 +5,21 @@ from rclpy.action import ActionClient
 from nav2_msgs.action import NavigateToPose
 from geometry_msgs.msg import PoseStamped, Point
 from vision_msgs.msg import Detection3DArray
-from std_msgs.msg import Bool
+from visualization_msgs.msg import Marker, MarkerArray
+from std_msgs.msg import Bool, ColorRGBA
 import time
 import tf2_ros
 import tf2_geometry_msgs
 from tf2_ros import Buffer, TransformListener
 
 WAYPOINTS = [
-    {'x': 1.0, 'y': 1.0},
-    {'x': 2.0, 'y': 1.0},
-    {'x': 2.0, 'y': 2.0},
-    {'x': 1.0, 'y': 2.0}
+    {'x': 0.0, 'y': 0.0},
+    {'x': 0.1, 'y': 0.0},
 ]
 
-BIN_LOCATION = {'x': 0.0, 'y': 0.0}
-APPROACH_DISTANCE = 0.3
+# Check on the map, reconfigure if remap
+BIN_LOCATION = {'x': 0.464, 'y': 1.92}
+APPROACH_DISTANCE = 1.0
 
 class DiceCollector(Node):
     def __init__(self):
@@ -29,15 +29,10 @@ class DiceCollector(Node):
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-
+        self.debug = True
         # Vision subscriber
         self.detected_dice = None
-        self.detection_sub = self.create_subscription(
-            Detection3DArray,
-            'detections',
-            self.detection_callback,
-            10
-        )
+        
         
         # Arm control publishers
         self.arm_target_pub = self.create_publisher(
@@ -51,14 +46,62 @@ class DiceCollector(Node):
             10
         )
 
+        self.debug_pub = self.create_publisher(MarkerArray,
+            'dice_markers',
+            10)
+
+        self.detection_sub = self.create_subscription(
+            Detection3DArray,
+            'detections',
+            self.detection_callback,
+            10
+        )
+
         # State management
         self.current_waypoint = 0
         self.is_busy = False
         self.current_nav_goal = None
-        
         # Create timer for exploration
         self.timer = self.create_timer(1.0, self.timer_callback)
-
+    def create_dice_marker(self, detection, index):
+        """Create a marker for visualizing a detected dice"""
+        marker = Marker()
+        marker.header.frame_id = 'map'
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.ns = "dice_detections"
+        marker.id = index
+        marker.type = Marker.CUBE
+        marker.action = Marker.ADD
+        
+        # Set the pose from the detection
+        marker.pose = detection.bbox.center
+        
+        # Set the scale based on the bounding box size
+        marker.scale.x = detection.bbox.size.x
+        marker.scale.y = detection.bbox.size.y
+        marker.scale.z = detection.bbox.size.z
+        
+        # Set color (red for detected dice)
+        marker.color = ColorRGBA()
+        marker.color.r = 1.0
+        marker.color.g = 0.0
+        marker.color.b = 0.0
+        marker.color.a = 0.7
+        
+        # Set marker lifetime (30 seconds)
+        marker.lifetime.sec = 60
+        
+        return marker
+    def publish_detection_markers(self, detections_msg):
+        """Publish markers for all detected dice"""
+        marker_array = MarkerArray()
+        
+        for idx, detection in enumerate(detections_msg.detections):
+            marker = self.create_dice_marker(detection, idx)
+            marker_array.markers.append(marker)
+        if len(marker_array.markers) >0:
+            self.get_logger().info("detection: plotting")
+            self.debug_pub.publish(marker_array)
     def control_gripper(self, close_gripper):
         """Control gripper open/close"""
         msg = Bool()
@@ -90,7 +133,7 @@ class DiceCollector(Node):
             transform = self.tf_buffer.lookup_transform(
                 'arm_base_link',  # Adjust this arm's base frame
                 target_pose.header.frame_id,
-                target_pose.header.stamp
+                rclpy.time.Time()
             )
             transformed_pose = tf2_geometry_msgs.do_transform_pose(target_pose, transform)
             return transformed_pose.pose
@@ -100,21 +143,19 @@ class DiceCollector(Node):
             return None
     
     def detection_callback(self, msg):
+        if self.debug:
+            self.publish_detection_markers(msg)
         # Ignore detections if we're busy or already have a target
         if self.is_busy or self.detected_dice is not None:
-            return
-
-        try:
-            transform = self.tf_buffer.lookup_transform('map', msg.header.frame_id, msg.header.stamp)
-        except Exception as e:
-            self.get_logger().error(f'Failed to lookup transform: {e}')
             return
 
         # Take the first valid detection
         for detection in msg.detections:
             try:
-                detection_map = tf2_geometry_msgs.do_transform_pose(detection.bbox.center, transform)
-                self.detected_dice = detection_map
+                self.detected_dice = detection.bbox.center
+                # self.detected_dice = PoseStamped()
+                # self.detected_dice.header = msg.header
+                # self.detected_dice.pose = detection.bbox.center
                 self.get_logger().info('Dice detected!')
                 
                 # Cancel current navigation if exploring
@@ -138,16 +179,24 @@ class DiceCollector(Node):
     def navigate_sync(self, x, y):
         """Synchronized navigation - waits for completion"""
         goal = self.create_nav_goal(x, y)
+        self.get_logger().info('flag 2.1')
+        # self.nav_client.wait_for_server()
+        if not self.nav_client.wait_for_server(timeout_sec=30.0):
+            self.get_logger().error("Navigation server not available!")
+            return False
+        self.get_logger().info('flag 2.2')
         
-        self.nav_client.wait_for_server()
+        self.get_logger().info(f"Sending goal: x={x}, y={y}, frame={goal.pose.header.frame_id}")
+
         send_goal_future = self.nav_client.send_goal_async(goal)
         rclpy.spin_until_future_complete(self, send_goal_future)
         
+        self.get_logger().info('flag 2.3')
         goal_handle = send_goal_future.result()
         if not goal_handle.accepted:
             self.get_logger().error('Goal rejected')
             return False
-
+        self.get_logger().info('flag 2.4')
         result_future = goal_handle.get_result_async()
         rclpy.spin_until_future_complete(self, result_future)
         return True
@@ -171,26 +220,39 @@ class DiceCollector(Node):
     def pick_dice(self):
         """Pick up the detected dice"""
         if not self.detected_dice:
+            self.get_logger().info('flag 1')
             return False
             
         try:
+
             # Navigate to approach pose
             target = self.detected_dice.position
+            self.get_logger().info('flag 2 -')
+            # self.get_logger().info(target.x)
+            # self.get_logger().info('---')
+            # self.get_logger().info(target.y)            
             if not self.navigate_sync(target.x - APPROACH_DISTANCE, target.y):
+                self.get_logger().info('flag 3')
                 return False
             
             pick_pose = self.create_pick_pose(self.detected_dice)
+            self.get_logger().info('flag 4')
             if not pick_pose:
+                self.get_logger().info('flag 5')
                 return False
             
             # Pre-grasp
+            self.get_logger().info('flag 6')
             if not self.move_arm_to_target(pick_pose.position.x, 
                                          pick_pose.position.y, 
                                          pick_pose.position.z + 0.1):
+                self.get_logger().info('flag 7')
                 return False
             
             # Open gripper
+            self.get_logger().info('flag 8')
             if not self.control_gripper(False):
+                self.get_logger().info('flag 9')
                 return False
             
             # Lower to grasp
@@ -259,6 +321,8 @@ class DiceCollector(Node):
                     self.return_to_bin()
                 self.detected_dice = None
             else:
+                # No Exploration for debug
+                return
                 # Continue exploration
                 waypoint = WAYPOINTS[self.current_waypoint]
                 self.get_logger().info(f'Moving to waypoint: {waypoint}')

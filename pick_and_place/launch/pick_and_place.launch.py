@@ -17,13 +17,26 @@ def generate_launch_description():
     astra_dir = get_package_share_directory('astra_camera')
 
     astra_node = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(astra_dir, 'launch/astra_pro.launch.py')),
+        PythonLaunchDescriptionSource(os.path.join(astra_dir, 'launch/gemini.launch.py')),
     )
                               
     colour_detector = launch_ros.actions.Node(
         package='pick_and_place', 
         executable='colour_detector', 
         name='colour_detector',
+        parameters=[{'use_sim_time': True}]
+    )
+
+    arm_tester = launch_ros.actions.Node(
+        package='pick_and_place', 
+        executable='arm_tester', 
+        name='arm_tester',
+    )
+    
+    nav2_tester = launch_ros.actions.Node(
+        package='pick_and_place', 
+        executable='nav2_tester', 
+        name='nav2_tester',
     )
 
     ld = LaunchDescription()

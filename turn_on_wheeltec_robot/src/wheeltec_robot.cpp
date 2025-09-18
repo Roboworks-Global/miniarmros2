@@ -100,7 +100,6 @@ void turn_on_robot::Akm_Cmd_Vel_Callback(const ackermann_msgs::msg::AckermannDri
 //void turn_on_robot::Cmd_Vel_Callback(const ackermann_msgs::msg::AckermannDriveStamped::SharedPtr akm_ctl) 
 void turn_on_robot::Cmd_Vel_Callback(const geometry_msgs::msg::Twist::SharedPtr twist_aux)
 {
-  RCLCPP_INFO(this->get_logger(),"I heard %f", twist_aux->linear.x); 
   short  transition;  //intermediate variable //中间变量
   //if(akm_cmd_vel=="none") {RCLCPP_INFO(this->get_logger(),"not akm");} //Prompt message //提示信息
   Send_Data.tx[0]=FRAME_HEADER; //frame head 0x7B //帧头0X7BAkm_Cmd_Vel_Sub
@@ -150,25 +149,28 @@ void turn_on_robot::joint_states_Callback(const sensor_msgs::msg::JointState::Sh
   //关节A
   transition=0;
   transition = joint_states->position[0]*1000; //将浮点数放大一千倍，简化传输
-  //ROS_INFO("%x",arm_joint.position[0]); 
+  RCLCPP_INFO(this->get_logger(),"Joint A: %d", transition); 
   Send_Data.tx[2] = transition;     //取数据的低8位
   Send_Data.tx[1] = transition>>8;  //取数据的高8位
   
   //关节B
   transition=0;
   transition = joint_states->position[1]*1000; //将浮点数放大一千倍，简化传输
+  RCLCPP_INFO(this->get_logger(),"Joint B: %d", transition); 
   Send_Data.tx[4] = transition;     //取数据的低8位
   Send_Data.tx[3] = transition>>8;  //取数据的高8位
 
   //关节C
   transition=0;
   transition = joint_states->position[2]*1000; //将浮点数放大一千倍，简化传输
+  RCLCPP_INFO(this->get_logger(),"Joint C: %d", transition); 
   Send_Data.tx[6] = transition;     //取数据的低8位
   Send_Data.tx[5] = transition>>8;  //取数据的高8位
  
   //机械爪
   transition=0;
   transition = joint_states->position[6]*1000; //将浮点数放大一千倍，简化传输
+  RCLCPP_INFO(this->get_logger(),"Gripper: %d", transition); 
   Send_Data.tx[8] = transition;     //取数据的低8位
   Send_Data.tx[7] = transition>>8;  //取数据的高8位
 

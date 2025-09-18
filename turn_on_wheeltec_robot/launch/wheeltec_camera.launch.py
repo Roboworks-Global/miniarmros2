@@ -28,6 +28,6 @@ def generate_launch_description():
 	
 	#Select your camera here, options include:
 	#Astra_S、Astra_Pro、Dabai、Gemini
-	ld.add_action(Astra_S)
+	ld.add_action(Gemini)
 
 	return ld

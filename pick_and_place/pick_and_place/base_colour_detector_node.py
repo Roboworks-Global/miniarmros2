@@ -5,9 +5,8 @@ import numpy as np
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo
 from vision_msgs.msg import Detection3DArray, Detection3D, BoundingBox3D, BoundingBox2D, ObjectHypothesisWithPose
-from std_msgs.msg import Header
 from cv_bridge import CvBridge
-import time
+
 from tf2_ros import Buffer, TransformListener, TransformBroadcaster, TransformException
 from typing import List, Tuple
 
@@ -31,14 +30,13 @@ class ColorDetectorNode(Node):
 
     depth_image_units_divisor = 1000.0
     current_color = None
-    rgb_image_before_resize = None
     rgb_image = None
     depth_image = None
     camera_info = None
-    maximum_detection_threshold = 0.08
-    min_contour_area = 100
+    maximum_detection_threshold = 0.3
+    min_contour_area = 200
     max_contour_area = 4000
-    target_frame = "map"
+    target_frame = "camera_link"
 
     blur_kernel_size = 50 #Gaussian blur
     sigmaColour = 9 #bilateral filter
@@ -60,18 +58,17 @@ class ColorDetectorNode(Node):
 
         self.bridge = CvBridge()
 
-        self.tf_buffer = Buffer(cache_time=rclpy.duration.Duration(seconds=5.0))
+        self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         cv2.namedWindow('Mask')
         cv2.namedWindow('Camera Feed')
         cv2.setMouseCallback('Camera Feed', self.get_hsv)
 
-        self.timer = self.create_timer(0.1, self.timer_callback) # tick at 10hz
-        self.latest_tf = None
+        self.timer = self.create_timer(0.05, self.timer_callback)
 
     def image_callback(self, msg : Image):
-        self.rgb_image_before_resize = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+        self.rgb_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
 
     def depth_callback(self, msg):
         self.depth_image = self.bridge.imgmsg_to_cv2(msg, "16UC1")
@@ -115,15 +112,6 @@ class ColorDetectorNode(Node):
         elif key == ord('y'):
             self.current_color = "yellow"
             self.get_logger().info(f"Selected Color: {self.current_color}")
-        elif key == ord('c'):
-            self.current_color = None
-            hsv_ranges = {
-                "green": [],
-                "blue": [],
-                "yellow": [],
-                "red": [],
-            }
-            self.get_logger().info(f"Color reset") 
 
     def convert_bb_to_3d(
         self,
@@ -135,56 +123,30 @@ class ColorDetectorNode(Node):
         center_y = int(bbox.center.y)
         size_x = int(bbox.size_x)
         size_y = int(bbox.size_y)
+
         u_min = max(center_x - size_x // 2, 0)
         u_max = min(center_x + size_x // 2, self.depth_image.shape[1] - 1)
         v_min = max(center_y - size_y // 2, 0)
         v_max = min(center_y + size_y // 2, self.depth_image.shape[0] - 1)
-        roi = self.depth_image[v_min:v_max, u_min:u_max]
-        
-        self.get_logger().info(f'Calculated params: ')
-        self.get_logger().info(f'center_x : {center_x}')
-        self.get_logger().info(f'center_y : {center_y}')
-        self.get_logger().info(f'size_x : {size_x}')
-        self.get_logger().info(f'size_y : {size_y}')
-        self.get_logger().info(f'u_min : {u_min}')
-        self.get_logger().info(f'u_max : {u_max}')
-        self.get_logger().info(f'v_min : {v_min}')
-        self.get_logger().info(f'v_max : {v_max}') 
-        # self.get_logger().info(f'Depth image size : {self.depth_image.size()}')
-        # self.get_logger().info(f'ROI Size : {roi.size()}')
-        
-        
-        if not np.any(roi):
-            self.get_logger().warn('no depth image rois before unit conversion')
-            return None
-        roi = roi / \
-            self.depth_image_units_divisor  # convert to meters
-        if not np.any(roi):
-            self.get_logger().warn('no depth image rois')
-            return None
 
-        self.get_logger().warn(f'biggest depth = {np.max(roi)}')
+        roi = self.depth_image[v_min:v_max, u_min:u_max] / \
+            self.depth_image_units_divisor  # convert to meters
+        
+        if not np.any(roi):
+            return None
 
         # find the z coordinate on the 3D BB
-        # bb_center_z_coord = self.depth_image[int(center_y)][int(
-        #     center_x)] / self.depth_image_units_divisor
-        roi_depths = roi[roi > 0]
-        bb_center_z_coord = np.min(roi_depths)
-        if bb_center_z_coord == 0:
-            self.get_logger().warn('Invalid median depth')
-            return None
-        
+        bb_center_z_coord = self.depth_image[int(center_y)][int(
+            center_x)] / self.depth_image_units_divisor
         z_diff = np.abs(roi - bb_center_z_coord)
         mask_z = z_diff <= self.maximum_detection_threshold
         if not np.any(mask_z):
-            self.get_logger().warn('no mask z')
             return None
 
         roi_threshold = roi[mask_z]
-        z_min, z_max = np.min(roi_threshold[roi_threshold > 0]), np.max(roi_threshold)
+        z_min, z_max = np.min(roi_threshold), np.max(roi_threshold)
         z = (z_max + z_min) / 2
         if z == 0:
-            self.get_logger().warn('no depth')
             return None
 
         # project from image to world space
@@ -215,8 +177,7 @@ class ColorDetectorNode(Node):
             transform: TransformStamped = self.tf_buffer.lookup_transform(
                 self.target_frame,
                 frame_id,
-                rclpy.time.Time(), # grab the latest tf.
-            )
+                rclpy.time.Time())
 
             translation = np.array([transform.transform.translation.x,
                                     transform.transform.translation.y,
@@ -230,38 +191,22 @@ class ColorDetectorNode(Node):
             return translation, rotation
 
         except TransformException as ex:
-            self.get_logger().warn(f'time is {time.time()}')
             self.get_logger().error(f"Could not transform: {ex}")
             return None
 
 
     def timer_callback(self):
-        if self.rgb_image_before_resize is None or self.depth_image is None or self.camera_info is None:
+        if self.rgb_image is None or self.depth_image is None or self.camera_info is None:
             return
 
-        #RGB image resolution stretched to depth image resolution
-        r = self.depth_image.shape[1] / self.rgb_image_before_resize.shape[1]
-        dim = (self.depth_image.shape[1], int(self.rgb_image_before_resize.shape[0] * r))
-        # perform the actual resizing of the image using cv2 resize
-        self.rgb_image = cv2.resize(self.rgb_image_before_resize, dim, interpolation=cv2.INTER_AREA)
-
-        # self.rgb_image = cv2.resize(self.rgb_image_before_resize,self.depth_image.shape())
-
         if not self.hsv_ranges:
-            self.get_logger().warn("Color has not been chosen")
             cv2.imshow("Camera Feed", self.rgb_image)
             return
         
-        t = self.get_transform(self.camera_info.header.frame_id)
-        if t is not None:
-            self.latest_tf = t 
-            # self.get_logger().warn("Update tf")   ---------
-        
-        transform = self.latest_tf
+        transform = self.get_transform(self.camera_info.header.frame_id)
         if transform is None:
-            # self.get_logger().warn("TF not available in this tick")   -------------
             return
-        
+
         key = cv2.waitKey(1)
         self.select_color(key)
 
@@ -276,9 +221,8 @@ class ColorDetectorNode(Node):
         combined_combined_mask = np.zeros(self.rgb_image.shape, dtype=np.uint8)
 
         detections_msg = Detection3DArray()
-        detections_msg.header = Header()
-        detections_msg.header.frame_id = self.target_frame
-        # self.get_logger().info(f"frame is {detections_msg.header.frame_id}")  ------------
+        detections_msg.header = self.camera_info.header
+
         for colour in self.hsv_ranges.keys():
             combined_mask = np.zeros(processed_image.shape[:2], dtype=np.uint8)
             for hsv_range in self.hsv_ranges[colour]:
@@ -292,9 +236,6 @@ class ColorDetectorNode(Node):
             combined_combined_mask = cv2.bitwise_or(combined_combined_mask, mask_with_contours)
 
             for contour in contours:
-                
-                # self.get_logger().info('Contour :' + contour)
-                
                 area = cv2.contourArea(contour)
                 if area > self.min_contour_area and area < self.max_contour_area:
                     x, y, w, h = cv2.boundingRect(contour)
@@ -309,10 +250,8 @@ class ColorDetectorNode(Node):
                     bbox3d = self.convert_bb_to_3d(bbox2d)
 
                     if bbox3d is not None:
-                        label2 = f'camera: X: {bbox3d.center.position.x:.2f}, Y: {bbox3d.center.position.y:.2f}, Z: {bbox3d.center.position.z:.2f}'
-                        cv2.putText(detected_cubes, label2, (x, y-20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOUR_CODES[colour], 2)
                         bbox3d = self.transform_3d_box(bbox3d, transform[0], transform[1])
-                        label = f'map: X: {bbox3d.center.position.x:.2f}, Y: {bbox3d.center.position.y:.2f}, Z: {bbox3d.center.position.z:.2f}'
+                        label = f'X: {bbox3d.center.position.x:.2f}, Y: {bbox3d.center.position.y:.2f}, Z: {bbox3d.center.position.z:.2f}'
                         cv2.putText(detected_cubes, label, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOUR_CODES[colour], 2)
 
                         detection = Detection3D()
@@ -320,7 +259,7 @@ class ColorDetectorNode(Node):
                         detection.id = colour
                         detections_msg.detections.append(detection)
 
-        self.get_logger().info(f"frame before pub is {detections_msg.header.frame_id}")
+
         combined_combined_mask = cv2.addWeighted(processed_image, 0.7, combined_combined_mask, 0.3, 0)
         self.detections_pub.publish(detections_msg)
         cv2.imshow('Mask', combined_combined_mask)
